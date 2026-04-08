@@ -1,0 +1,48 @@
+ablations:
+  seeds: [42, 123, 456]
+
+  architecture:
+    models: ["resnet50", "efficientnet_b0", "vit_small"]
+    fixed:
+      strategy: "fedavg"
+      alpha: 0.5
+      num_clients: 3
+      local_epochs: 3
+      num_rounds: 30
+
+  noniid_severity:
+    alpha_values: [0.1, 0.5, 1.0, 10.0]
+    fixed:
+      model: "resnet50"
+      strategy: "fedavg"
+      num_clients: 3
+
+  num_clients:
+    client_counts: [2, 3, 5]
+    fixed:
+      model: "resnet50"
+      strategy: "fedavg"
+      alpha: 0.5
+
+  local_epochs:
+    epoch_values: [1, 3, 5]
+    fixed:
+      model: "resnet50"
+      strategy: "fedavg"
+      alpha: 0.5
+      num_clients: 3
+
+  strategy_comparison:
+    strategies: ["fedavg", "fedprox"]
+    fixed:
+      model: "resnet50"
+      alpha: 0.5
+      num_clients: 3
+
+  privacy_accuracy:
+    epsilon_values: [0.5, 1.0, 2.0, 5.0]
+    fixed:
+      model: "resnet50"
+      strategy: "fedavg"
+      alpha: 0.5
+      num_clients: 3

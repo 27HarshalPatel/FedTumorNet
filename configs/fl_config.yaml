@@ -1,0 +1,35 @@
+federation:
+  num_clients: 3
+  num_rounds: 50
+  fraction_fit: 1.0
+  fraction_evaluate: 1.0
+  min_fit_clients: 3
+  min_evaluate_clients: 3
+  min_available_clients: 3
+
+client:
+  local_epochs: 3
+  batch_size: 32
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: "sgd"
+  momentum: 0.9
+
+strategy:
+  name: "fedavg"
+  fedprox_mu: 0.01
+
+data:
+  partition_method: "dirichlet"
+  dirichlet_alpha: 0.5
+  seed: 42
+
+model:
+  name: "resnet50"
+  num_classes: 4
+  pretrained: true
+
+logging:
+  save_dir: "outputs/fl_experiments"
+  log_per_round: true
+  save_global_model: true

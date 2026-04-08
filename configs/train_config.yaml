@@ -1,0 +1,17 @@
+training:
+  model: "resnet50"
+  num_classes: 4
+  batch_size: 32
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: "adam"
+  scheduler: "cosine"
+  num_epochs: 50
+  early_stopping_patience: 10
+  seed: 42
+  device: "auto"
+
+logging:
+  save_dir: "outputs/checkpoints"
+  log_interval: 10
+  use_wandb: false
