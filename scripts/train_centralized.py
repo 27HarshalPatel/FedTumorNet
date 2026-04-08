@@ -1,6 +1,17 @@
 """Centralized baseline training script.
-Usage: python scripts/train_centralized.py --config configs/train_config.yaml
+Usage (from anywhere):
+  python scripts/train_centralized.py
+  python scripts/train_centralized.py --config configs/train_config.yaml
 """
+import os, sys
+from pathlib import Path
+
+# Ensure CWD is always the project root, regardless of where this script is invoked
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+os.chdir(PROJECT_ROOT)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import argparse
 import yaml
 

@@ -1,6 +1,15 @@
 """Federated learning runner.
 Usage: python scripts/run_federated.py --strategy fedavg --alpha 0.5 --num_clients 3
 """
+
+import os, sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+os.chdir(PROJECT_ROOT)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import argparse
 import json
 import yaml
