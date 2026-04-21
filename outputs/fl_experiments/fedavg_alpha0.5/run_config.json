@@ -1,0 +1,6 @@
+{
+  "strategy": "fedavg",
+  "alpha": 0.5,
+  "num_clients": 3,
+  "num_rounds": 10
+}
