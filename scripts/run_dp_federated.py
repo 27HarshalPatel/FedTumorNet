@@ -7,6 +7,9 @@ Usage:
 import os, sys
 from pathlib import Path
 
+# ── Ray OOM mitigation: raise kill threshold from 0.95 → 0.98 ────────────────
+os.environ.setdefault("RAY_memory_usage_threshold", "0.98")
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 os.chdir(PROJECT_ROOT)
 if str(PROJECT_ROOT) not in sys.path:
@@ -30,30 +33,57 @@ def run_one_epsilon(epsilon, config, dp_config, num_clients, num_rounds, save_di
     strategy_name = config["strategy"]["name"]
     alpha = config["data"]["dirichlet_alpha"]
 
-    client_datasets, global_test = create_federated_datasets(
+    # Only load global test set in main process; client data is created lazily
+    # inside each Ray actor to avoid serialising ALL partitions into EVERY worker.
+    _, global_test = create_federated_datasets(
         num_clients=num_clients, alpha=alpha, seed=config["data"]["seed"]
     )
-    loaders = get_dataloaders(client_datasets, batch_size=config["client"]["batch_size"])
-    global_loader = DataLoader(global_test, batch_size=32, shuffle=False, num_workers=0)
+    global_loader = DataLoader(global_test, batch_size=32, shuffle=False,
+                               num_workers=0, pin_memory=False)
 
+    # Estimate sample rate for noise multiplier from a quick partition
+    _tmp_datasets, _ = create_federated_datasets(
+        num_clients=num_clients, alpha=alpha, seed=config["data"]["seed"]
+    )
     sample_rate = config["client"]["batch_size"] / max(
-        len(client_datasets[0]["train"]), 1)
+        len(_tmp_datasets[0]["train"]), 1)
+    del _tmp_datasets  # free immediately
+
     noise_mult = compute_noise_multiplier(
         epsilon, dp_config["differential_privacy"]["delta"],
         config["client"]["local_epochs"], sample_rate
     )
     print(f"  ε={epsilon:.1f} → noise_multiplier={noise_mult:.4f}")
 
+    # Snapshot lightweight config — do NOT capture heavy data in the closure
+    _cfg = config
+    _dp_cfg = dp_config
+    _eps = epsilon
+    _nm = noise_mult
+
     def dp_client_fn_inner(context):
         cid = int(context.node_config.get("partition-id", 0))
-        model = get_model(config["model"]["name"], config["model"]["num_classes"])
+
+        # Each actor creates ONLY its own shard
+        client_datasets, _ = create_federated_datasets(
+            num_clients=_cfg["federation"]["num_clients"],
+            alpha=_cfg["data"]["dirichlet_alpha"],
+            seed=_cfg["data"]["seed"],
+        )
+        loaders = get_dataloaders(
+            {cid: client_datasets[cid]},
+            batch_size=_cfg["client"]["batch_size"],
+            num_workers=0,
+        )
+
+        model = get_model(_cfg["model"]["name"], _cfg["model"]["num_classes"])
         client = DPBrainTumorClient(
             model, loaders[cid]["train"], loaders[cid]["val"],
-            config=config["client"],
-            target_epsilon=epsilon,
-            delta=dp_config["differential_privacy"]["delta"],
-            max_grad_norm=dp_config["differential_privacy"]["max_grad_norm"],
-            noise_multiplier=noise_mult,
+            config=_cfg["client"],
+            target_epsilon=_eps,
+            delta=_dp_cfg["differential_privacy"]["delta"],
+            max_grad_norm=_dp_cfg["differential_privacy"]["max_grad_norm"],
+            noise_multiplier=_nm,
         )
         return client.to_client()
 

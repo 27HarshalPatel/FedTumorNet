@@ -43,14 +43,15 @@ def server_fn(context: Context) -> ServerAppComponents:
         "num-rounds", fl_config["federation"]["num_rounds"]
     ))
 
-    # Build global test loader
-    client_datasets, global_test = create_federated_datasets(
+    # Build global test loader — discard client partitions to save memory
+    _, global_test = create_federated_datasets(
         num_clients=fl_config["federation"]["num_clients"],
         alpha=fl_config["data"]["dirichlet_alpha"],
         seed=fl_config["data"]["seed"],
     )
     global_test_loader = DataLoader(global_test, batch_size=32,
-                                    shuffle=False, num_workers=0)
+                                    shuffle=False, num_workers=0,
+                                    pin_memory=False)
 
     evaluate_fn = make_evaluate_fn(global_test_loader, fl_config)
 

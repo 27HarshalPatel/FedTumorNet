@@ -4,6 +4,9 @@ Usage:
   python scripts/run_federated.py --strategy fedprox --alpha 0.1 --num_clients 3
 """
 import os, sys
+
+# ── Ray OOM mitigation: raise kill threshold from 0.95 → 0.98 ────────────────
+os.environ.setdefault("RAY_memory_usage_threshold", "0.98")
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -53,39 +56,59 @@ def main():
     print(f"Clients: {args.num_clients} | Rounds: {args.num_rounds} | α={args.alpha}")
 
     # ── Build data for server-side global test ────────────────────────────────
+    # Only load the global test set here; client data is created lazily inside
+    # each Ray actor to avoid serialising ALL partitions into EVERY worker.
     from src.data.dataset import create_federated_datasets
-    client_datasets, global_test = create_federated_datasets(
+    _, global_test = create_federated_datasets(
         num_clients=args.num_clients,
         alpha=args.alpha,
         seed=config["data"]["seed"],
     )
     global_test_loader = DataLoader(global_test, batch_size=32,
-                                    shuffle=False, num_workers=0)
+                                    shuffle=False, num_workers=0,
+                                    pin_memory=False)
 
     # ── Build ServerApp ───────────────────────────────────────────────────────
     from src.fl.server import create_server_app
     server_app = create_server_app(config, global_test_loader)
 
     # ── Build ClientApp ───────────────────────────────────────────────────────
-    from src.fl.client import BrainTumorClient, get_weights, set_weights
-    from src.fl.strategies import get_strategy
+    # IMPORTANT: The client_fn closure must NOT capture large objects (datasets,
+    # dataloaders).  Ray pickles the closure to each ClientAppActor; capturing
+    # all dataloaders tripled total memory and caused OOM.  Instead, we pass
+    # only the lightweight `config` dict and let each actor create its own
+    # partition on the fly.
+    from src.fl.client import BrainTumorClient
     from src.models.resnet import get_model
-    from src.data.dataset import get_dataloaders
+    from src.data.dataset import create_federated_datasets as _create_fed, get_dataloaders
 
-    loaders = get_dataloaders(client_datasets, batch_size=config["client"]["batch_size"],
-                              num_workers=0)
+    # Snapshot only the tiny config dict — no heavy data
+    _cfg = config  # ~1 KB serialised
 
     def _client_fn(context):
         cid = int(context.node_config.get("partition-id", 0))
-        model = get_model(config["model"]["name"], config["model"]["num_classes"],
-                          pretrained=config["model"]["pretrained"])
+
+        # Each actor creates ONLY its own shard (not all clients)
+        client_datasets, _ = _create_fed(
+            num_clients=_cfg["federation"]["num_clients"],
+            alpha=_cfg["data"]["dirichlet_alpha"],
+            seed=_cfg["data"]["seed"],
+        )
+        loaders = get_dataloaders(
+            {cid: client_datasets[cid]},  # only this client's data
+            batch_size=_cfg["client"]["batch_size"],
+            num_workers=0,
+        )
+
+        model = get_model(_cfg["model"]["name"], _cfg["model"]["num_classes"],
+                          pretrained=_cfg["model"]["pretrained"])
         client = BrainTumorClient(
             model=model,
             train_loader=loaders[cid]["train"],
             val_loader=loaders[cid]["val"],
-            config=config["client"],
-            strategy=config["strategy"]["name"],
-            mu=config["strategy"].get("fedprox_mu", 0.01),
+            config=_cfg["client"],
+            strategy=_cfg["strategy"]["name"],
+            mu=_cfg["strategy"].get("fedprox_mu", 0.01),
         )
         return client.to_client()
 

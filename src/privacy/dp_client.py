@@ -114,10 +114,15 @@ def dp_client_fn(context: Context) -> fl.client.Client:
     num_clients  = cfg["federation"]["num_clients"]
     alpha        = cfg["data"]["dirichlet_alpha"]
 
+    # Create all partitions (deterministic), then keep only this client's shard
     client_datasets, _ = create_federated_datasets(
         num_clients=num_clients, alpha=alpha, seed=cfg["data"]["seed"]
     )
-    loaders = get_dataloaders(client_datasets, batch_size=cfg["client"]["batch_size"])
+    loaders = get_dataloaders(
+        {partition_id: client_datasets[partition_id]},  # only this client's data
+        batch_size=cfg["client"]["batch_size"],
+        num_workers=0,
+    )
     model   = get_model(cfg["model"]["name"], cfg["model"]["num_classes"])
 
     client = DPBrainTumorClient(

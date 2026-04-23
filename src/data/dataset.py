@@ -66,7 +66,7 @@ def get_centralized_dataloaders(data_dir="data/raw", batch_size=32, val_ratio=0.
     ds_v  = BrainTumorDataset(vp, vl, ev_tfm)
     ds_te = BrainTumorDataset(xp2, xl2, ev_tfm)
     print(f"Centralized: train={len(ds_tr)}, val={len(ds_v)}, test={len(ds_te)}")
-    mk = dict(num_workers=num_workers, pin_memory=True)
+    mk = dict(num_workers=num_workers, pin_memory=torch.cuda.is_available())
     return {"train": DataLoader(ds_tr, batch_size, shuffle=True, drop_last=True, **mk),
             "val":   DataLoader(ds_v,  batch_size, shuffle=False, **mk),
             "test":  DataLoader(ds_te, batch_size, shuffle=False, **mk)}
@@ -141,7 +141,9 @@ def create_federated_datasets(data_dir="data/raw/Training", num_clients=3, alpha
 
 
 def get_dataloaders(client_datasets, batch_size=32, num_workers=4):
-    mk = dict(num_workers=num_workers, pin_memory=True)
+    # Only pin memory when a CUDA GPU is actually available
+    import torch as _torch
+    mk = dict(num_workers=num_workers, pin_memory=_torch.cuda.is_available())
     return {cid: {
         "train": DataLoader(ds["train"], batch_size, shuffle=True, drop_last=True, **mk),
         "val":   DataLoader(ds["val"],   batch_size, shuffle=False, **mk),

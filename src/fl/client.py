@@ -113,14 +113,17 @@ def client_fn(context: Context) -> fl.client.Client:
     strategy     = cfg["strategy"]["name"]
     mu           = cfg["strategy"].get("fedprox_mu", 0.01)
 
+    # Create all partitions (deterministic), then keep only this client's shard
     client_datasets, _ = create_federated_datasets(
         num_clients=num_clients,
         alpha=alpha,
         seed=cfg["data"]["seed"],
     )
-    loaders = get_dataloaders(client_datasets,
-                              batch_size=cfg["client"]["batch_size"],
-                              num_workers=0)   # 0 workers avoids Ray/fork issues
+    loaders = get_dataloaders(
+        {partition_id: client_datasets[partition_id]},  # only this client's data
+        batch_size=cfg["client"]["batch_size"],
+        num_workers=0,   # 0 workers avoids Ray/fork issues
+    )
 
     model = get_model(cfg["model"]["name"], cfg["model"]["num_classes"],
                       pretrained=cfg["model"]["pretrained"])
