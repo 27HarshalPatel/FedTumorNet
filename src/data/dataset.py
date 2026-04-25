@@ -42,7 +42,11 @@ def load_image_paths_and_labels(data_dir: str) -> Tuple[List[str], List[int]]:
     return paths, labels
 
 def get_centralized_dataloaders(data_dir="data/raw", batch_size=32, val_ratio=0.15,
-                                test_ratio=0.15, image_size=224, num_workers=4, seed=42):
+                                test_ratio=0.15, image_size=224, num_workers=None, seed=42):
+    import os
+    if num_workers is None:
+        # Auto-detect: use half of available CPUs, capped at 4, minimum 0
+        num_workers = min(max(os.cpu_count() // 2, 0), 4)
     train_dir = Path(data_dir)/"Training"; test_dir = Path(data_dir)/"Testing"
     tr_tfm = get_train_transforms(image_size); ev_tfm = get_eval_transforms(image_size)
     if train_dir.exists() and test_dir.exists():

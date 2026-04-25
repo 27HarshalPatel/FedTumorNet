@@ -10,6 +10,7 @@ training:
   early_stopping_patience: 10
   seed: 42
   device: "auto"
+  num_workers: null   # null = auto-detect (half CPUs, max 4). Set to 2 on Colab T4.
 
 logging:
   save_dir: "outputs/checkpoints"

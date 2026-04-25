@@ -67,6 +67,7 @@ def train_centralized(config: Dict):
     loaders = get_centralized_dataloaders(
         data_dir="data/raw",
         batch_size=config["training"]["batch_size"],
+        num_workers=config["training"].get("num_workers", None),
         seed=seed,
     )
 
