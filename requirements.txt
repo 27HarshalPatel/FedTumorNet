@@ -1,6 +1,6 @@
 torch>=2.1.0
 torchvision>=0.16.0
-flwr>=1.7.0
+flwr[simulation]>=1.7.0
 opacus>=1.4.0
 numpy>=1.24.0
 pandas>=2.0.0
