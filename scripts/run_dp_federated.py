@@ -7,8 +7,18 @@ Usage:
 import os, sys
 from pathlib import Path
 
-# ── Ray OOM mitigation: raise kill threshold from 0.95 → 0.98 ────────────────
-os.environ.setdefault("RAY_memory_usage_threshold", "0.98")
+# ── Suppress noisy TF/CUDA/protobuf/Ray warnings before any imports ──────────
+os.environ.setdefault("RAY_memory_usage_threshold",       "0.98")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL",             "3")
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS",            "0")
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
+os.environ.setdefault("RAY_DEDUP_LOGS",                   "1")
+os.environ.setdefault("FLWR_TELEMETRY_ENABLED",           "0")
+
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="flwr")
+warnings.filterwarnings("ignore", category=FutureWarning,      module="ray")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 os.chdir(PROJECT_ROOT)

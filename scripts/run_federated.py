@@ -5,8 +5,18 @@ Usage:
 """
 import os, sys
 
-# ── Ray OOM mitigation: raise kill threshold from 0.95 → 0.98 ────────────────
-os.environ.setdefault("RAY_memory_usage_threshold", "0.98")
+# ── Suppress noisy TF/CUDA/protobuf/Ray warnings before any imports ──────────
+os.environ.setdefault("RAY_memory_usage_threshold",       "0.98")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL",             "3")      # hide cuFFT/cuDNN errors
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS",            "0")
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")  # MessageFactory fix
+os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")   # hide Ray FutureWarning
+os.environ.setdefault("RAY_DEDUP_LOGS",                   "1")
+os.environ.setdefault("FLWR_TELEMETRY_ENABLED",           "0")
+
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="flwr")
+warnings.filterwarnings("ignore", category=FutureWarning,      module="ray")
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -85,21 +95,32 @@ def main():
     # Snapshot only the tiny config dict — no heavy data
     _cfg = config  # ~1 KB serialised
 
+    # Actor-level dataset cache — keyed by (num_clients, alpha, seed, cid).
+    # Flower calls client_fn once per selected client per round; without caching
+    # create_federated_datasets() would run 3 × num_rounds = 30 times.
+    _dataset_cache: dict = {}
+
     def _client_fn(context):
         cid = int(context.node_config.get("partition-id", 0))
+        cache_key = (_cfg["federation"]["num_clients"],
+                     _cfg["data"]["dirichlet_alpha"],
+                     _cfg["data"]["seed"], cid)
 
-        # Each actor creates ONLY its own shard (not all clients)
-        client_datasets, _ = _create_fed(
-            num_clients=_cfg["federation"]["num_clients"],
-            alpha=_cfg["data"]["dirichlet_alpha"],
-            seed=_cfg["data"]["seed"],
-        )
-        loaders = get_dataloaders(
-            {cid: client_datasets[cid]},  # only this client's data
-            batch_size=_cfg["client"]["batch_size"],
-            num_workers=0,
-        )
+        if cache_key not in _dataset_cache:
+            # First call for this (cid, config): build partition silently
+            client_datasets, _ = _create_fed(
+                num_clients=_cfg["federation"]["num_clients"],
+                alpha=_cfg["data"]["dirichlet_alpha"],
+                seed=_cfg["data"]["seed"],
+                verbose=False,   # suppress per-actor print/save
+            )
+            _dataset_cache[cache_key] = get_dataloaders(
+                {cid: client_datasets[cid]},
+                batch_size=_cfg["client"]["batch_size"],
+                num_workers=0,
+            )
 
+        loaders = _dataset_cache[cache_key]
         model = get_model(_cfg["model"]["name"], _cfg["model"]["num_classes"],
                           pretrained=_cfg["model"]["pretrained"])
         client = BrainTumorClient(

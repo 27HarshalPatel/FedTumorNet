@@ -94,7 +94,8 @@ def _safe_split(indices, labels, test_size, seed):
 
 
 def create_federated_datasets(data_dir="data/raw/Training", num_clients=3, alpha=0.5,
-                               val_ratio=0.15, test_ratio=0.15, image_size=224, seed=42):
+                               val_ratio=0.15, test_ratio=0.15, image_size=224, seed=42,
+                               verbose=True):
     ap, al = load_image_paths_and_labels(data_dir)
     partitions = dirichlet_partition(al, num_clients, alpha, seed=seed)
     tr_tfm = get_train_transforms(image_size); ev_tfm = get_eval_transforms(image_size)
@@ -133,14 +134,15 @@ def create_federated_datasets(data_dir="data/raw/Training", num_clients=3, alpha
         gl = [al[i] for i in tei2]
 
     global_test = BrainTumorDataset(gp, gl, ev_tfm)
-    print(f"\nFederated: {num_clients} clients, alpha={alpha}")
-    for cid, ds in client_datasets.items():
-        print(f"  Client {cid}: train={len(ds['train'])}, "
-              f"val={len(ds['val'])}, test={len(ds['test'])}")
-    print(f"  Global test: {len(global_test)}")
-    visualize_partition(partitions, al, CLASS_NAMES,
-        save_path=f"outputs/figures/eda/partition_alpha_{alpha}.png",
-        title=f"Non-IID Partition (α={alpha})")
+    if verbose:
+        print(f"\nFederated: {num_clients} clients, alpha={alpha}")
+        for cid, ds in client_datasets.items():
+            print(f"  Client {cid}: train={len(ds['train'])}, "
+                  f"val={len(ds['val'])}, test={len(ds['test'])}")
+        print(f"  Global test: {len(global_test)}")
+        visualize_partition(partitions, al, CLASS_NAMES,
+            save_path=f"outputs/figures/eda/partition_alpha_{alpha}.png",
+            title=f"Non-IID Partition (α={alpha})")
     return client_datasets, global_test
 
 
