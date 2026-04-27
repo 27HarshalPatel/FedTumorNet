@@ -6,14 +6,27 @@ from flwr.server.strategy import FedAvg, FedProx
 from flwr.common import Metrics
 
 def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
-    """Aggregate metrics with sample-count weighting."""
+    """Aggregate scalar metrics with sample-count weighting.
+
+    Robust to: clients reporting different metric keys, non-numeric values,
+    and zero total weight (e.g. all clients had empty val shards).
+    """
+    if not metrics:
+        return {}
     total = sum(n for n, _ in metrics)
-    agg = {}
-    for key in (metrics[0][1].keys() if metrics else []):
-        agg[key] = sum(m[key] * n for n, m in metrics) / total if total > 0 else 0.0
+    if total <= 0:
+        return {}
+    # Only aggregate keys present in every client's metrics dict and numeric.
+    common_keys = set.intersection(*[set(m.keys()) for _, m in metrics])
+    agg: Metrics = {}
+    for key in common_keys:
+        try:
+            agg[key] = sum(float(m[key]) * n for n, m in metrics) / total
+        except (TypeError, ValueError):
+            continue
     return agg
 
-def get_strategy(config: Dict, evaluate_fn=None):
+def get_strategy(config: Dict, evaluate_fn=None, initial_parameters=None):
     """Factory: returns configured Flower strategy."""
     name = config["strategy"]["name"].lower()
     mu   = config["strategy"].get("fedprox_mu", 0.01)
@@ -28,6 +41,8 @@ def get_strategy(config: Dict, evaluate_fn=None):
         evaluate_metrics_aggregation_fn=weighted_average,
         evaluate_fn=evaluate_fn,
     )
+    if initial_parameters is not None:
+        common["initial_parameters"] = initial_parameters
 
     if name == "fedprox":
         return FedProx(proximal_mu=mu, **common)

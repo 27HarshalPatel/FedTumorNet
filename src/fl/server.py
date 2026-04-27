@@ -69,7 +69,8 @@ def server_fn(context: Context) -> ServerAppComponents:
     return ServerAppComponents(strategy=strategy, config=config)
 
 
-def create_server_app(fl_config: Dict, global_test_loader=None) -> ServerApp:
+def create_server_app(fl_config: Dict, global_test_loader=None,
+                      initial_parameters=None) -> ServerApp:
     """Build a Flower ServerApp — used by the external runner."""
     evaluate_fn = (make_evaluate_fn(global_test_loader, fl_config)
                    if global_test_loader is not None else None)
@@ -81,7 +82,8 @@ def create_server_app(fl_config: Dict, global_test_loader=None) -> ServerApp:
             "round":         server_round,
         }
 
-    strategy = get_strategy(fl_config, evaluate_fn=evaluate_fn)
+    strategy = get_strategy(fl_config, evaluate_fn=evaluate_fn,
+                            initial_parameters=initial_parameters)
     strategy.on_fit_config_fn = on_fit_config_fn
     server_config = ServerConfig(num_rounds=fl_config["federation"]["num_rounds"])
 

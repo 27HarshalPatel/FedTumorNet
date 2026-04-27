@@ -18,16 +18,20 @@ def get_weights(model: nn.Module) -> List[np.ndarray]:
 
 def set_weights(model: nn.Module, params: List[np.ndarray]):
     state = model.state_dict()
+    new_state = {}
     for key, val in zip(state.keys(), params):
-        state[key] = torch.tensor(val)
-    model.load_state_dict(state, strict=True)
+        # Preserve original dtype (e.g. int64 for BatchNorm `num_batches_tracked`)
+        new_state[key] = torch.from_numpy(np.asarray(val)).to(state[key].dtype)
+    model.load_state_dict(new_state, strict=True)
 
 
-def fedprox_loss(model: nn.Module, global_params: List[np.ndarray], mu: float) -> torch.Tensor:
-    """Proximal term for FedProx: mu/2 * ||w - w_global||^2"""
+def fedprox_loss(model: nn.Module, global_params: List[torch.Tensor], mu: float) -> torch.Tensor:
+    """Proximal term for FedProx: mu/2 * ||w - w_global||^2.
+    `global_params` must already be device tensors (built once per fit call).
+    """
     proximal = 0.0
     for local_p, g in zip(model.parameters(), global_params):
-        proximal += ((local_p - torch.tensor(g).to(local_p.device)) ** 2).sum()
+        proximal = proximal + ((local_p - g) ** 2).sum()
     return (mu / 2) * proximal
 
 
@@ -63,8 +67,11 @@ class BrainTumorClient(NumPyClient):
                         momentum=self.config.get("momentum", 0.9),
                         weight_decay=self.config.get("weight_decay", 1e-4))
 
-        global_params = ([p.copy() for p in parameters]
-                         if self.strategy == "fedprox" else None)
+        # Pre-build device tensors once (avoid per-batch host→device copies).
+        global_params = (
+            [torch.from_numpy(np.asarray(p)).to(self.device) for p in parameters]
+            if self.strategy == "fedprox" else None
+        )
 
         self.model.train()
         total_loss = total_correct = total_samples = 0
@@ -91,10 +98,14 @@ class BrainTumorClient(NumPyClient):
 
     def evaluate(self, parameters: List[np.ndarray], config: Dict):
         self.set_parameters(parameters)
+        n_val = len(self.val_loader.dataset)
+        if n_val == 0:
+            # Empty val shard on extreme non-IID partitions — skip cleanly.
+            return 0.0, 0, {"val_acc": 0.0, "skipped": 1}
         loss, acc, _, _, _ = eval_model(
             self.model, self.val_loader, self.criterion, self.device
         )
-        return loss, len(self.val_loader.dataset), {"val_acc": acc}
+        return loss, n_val, {"val_acc": acc}
 
 
 # ── ClientApp factory (flwr >= 1.20) ────────────────────────────────────────

@@ -6,7 +6,7 @@ Usage:
 import os, sys
 
 # ── Suppress noisy TF/CUDA/protobuf/Ray warnings before any imports ──────────
-os.environ.setdefault("RAY_memory_usage_threshold",       "0.98")
+os.environ.setdefault("RAY_memory_usage_threshold",       "0.95")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL",             "3")      # hide cuFFT/cuDNN errors
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS",            "0")
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")  # MessageFactory fix
@@ -37,6 +37,8 @@ def main():
     parser.add_argument("--num_clients", type=int,   default=3)
     parser.add_argument("--num_rounds",  type=int,   default=10)   # start small
     parser.add_argument("--num_cpus",    type=float, default=1.0)
+    parser.add_argument("--num_gpus_per_client", type=float, default=-1.0,
+                        help="GPU fraction per Ray actor. -1 = auto (1/num_clients if CUDA, else 0).")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -47,23 +49,23 @@ def main():
     config["data"]["dirichlet_alpha"]   = args.alpha
     config["federation"]["num_clients"] = args.num_clients
     config["federation"]["num_rounds"]  = args.num_rounds
-
-    # Write updated config so client_fn reads the CLI overrides
-    import tempfile, atexit
-    tmp_cfg = Path("configs/_fl_config_run.yaml")
-    with open(tmp_cfg, "w") as f:
-        yaml.safe_dump(config, f)
-    atexit.register(lambda: tmp_cfg.unlink(missing_ok=True))
-    # Point client_fn at the temp config
-    os.environ["FL_CONFIG"] = str(tmp_cfg)
+    # Soften strict client thresholds so a single transient actor failure
+    # does not abort the whole simulation.
+    config["federation"]["min_fit_clients"]       = max(2, args.num_clients - 1)
+    config["federation"]["min_evaluate_clients"]  = max(2, args.num_clients - 1)
+    config["federation"]["min_available_clients"] = args.num_clients
 
     save_dir = Path("outputs/fl_experiments") / f"{args.strategy}_alpha{args.alpha}"
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    cuda_ok = torch.cuda.is_available()
     print("=" * 60)
     print(f"FedTumorNet — Federated Learning [{args.strategy.upper()}]")
     print("=" * 60)
     print(f"Clients: {args.num_clients} | Rounds: {args.num_rounds} | α={args.alpha}")
+    print(f"CUDA available: {cuda_ok} | device count: {torch.cuda.device_count()}")
+    if cuda_ok:
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
 
     # ── Build data for server-side global test ────────────────────────────────
     # Only load the global test set here; client data is created lazily inside
@@ -78,9 +80,22 @@ def main():
                                     shuffle=False, num_workers=0,
                                     pin_memory=False)
 
-    # ── Build ServerApp ───────────────────────────────────────────────────────
+    # ── Build ServerApp ────────────────────────────────────────────
+    # Build a pretrained ResNet50 ONCE on the driver and seed the strategy
+    # with its weights as `initial_parameters`. This avoids 3 Ray actors
+    # racing to download torchvision checkpoints into ~/.cache concurrently.
+    from src.models.resnet import get_model as _get_model
+    from src.fl.client import get_weights as _get_weights
+    from flwr.common import ndarrays_to_parameters
+
+    _seed_model = _get_model(config["model"]["name"], config["model"]["num_classes"],
+                             pretrained=config["model"]["pretrained"])
+    initial_parameters = ndarrays_to_parameters(_get_weights(_seed_model))
+    del _seed_model
+
     from src.fl.server import create_server_app
-    server_app = create_server_app(config, global_test_loader)
+    server_app = create_server_app(config, global_test_loader,
+                                   initial_parameters=initial_parameters)
 
     # ── Build ClientApp ───────────────────────────────────────────────────────
     # IMPORTANT: The client_fn closure must NOT capture large objects (datasets,
@@ -121,8 +136,11 @@ def main():
             )
 
         loaders = _dataset_cache[cache_key]
+        # Clients receive weights from the server every round (round 1 uses
+        # `initial_parameters` set on the strategy), so skip the torchvision
+        # download here — prevents a 3-way race on ~/.cache/torch/hub.
         model = get_model(_cfg["model"]["name"], _cfg["model"]["num_classes"],
-                          pretrained=_cfg["model"]["pretrained"])
+                          pretrained=False)
         client = BrainTumorClient(
             model=model,
             train_loader=loaders[cid]["train"],
@@ -136,9 +154,15 @@ def main():
     import flwr as fl
     client_app = fl.client.ClientApp(client_fn=_client_fn)
 
-    # ── Run simulation ────────────────────────────────────────────────────────
-    backend_cfg = {"client_resources": {"num_cpus": args.num_cpus, "num_gpus": 0.0}}
-    print(f"\nStarting simulation with Ray backend…\n")
+    # ── Run simulation ───────────────────────────────────────────────
+    if args.num_gpus_per_client >= 0:
+        gpus_per_client = args.num_gpus_per_client
+    else:
+        gpus_per_client = (1.0 / args.num_clients) if cuda_ok else 0.0
+    backend_cfg = {"client_resources":
+                   {"num_cpus": args.num_cpus, "num_gpus": gpus_per_client}}
+    print(f"\nRay client_resources: {backend_cfg['client_resources']}")
+    print(f"Starting simulation with Ray backend…\n")
 
     fl.simulation.run_simulation(
         server_app=server_app,
